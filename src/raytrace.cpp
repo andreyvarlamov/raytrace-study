@@ -69,18 +69,104 @@ SaveBMP(image_u32 *Image, const char *FileName)
 func vec3
 RayCast(world *World, vec3 RayOrigin, vec3 RayDirection)
 {
-    vec3 FinalColor = Vec3(1.0f, 0.0f, 0.0f);
+    f32 MinHitDistance = 0.001f;
+    f32 Tolerance = 0.0001f;
+
+    vec3 FinalColor = {};
+    vec3 Attenuation = Vec3(1, 1, 1);
+    for (int BounceI = 0; BounceI < 8; BounceI++)
+    {
+        f32 HitDistance = FLT_MAX;
+
+        b32 HitSomething = false;
+        int HitMaterial = 0;
+        vec3 NextOrigin = {};
+        vec3 NextNormal = {};
+
+        plane *Plane = World->Planes;
+        for (int PlaneI = 0; PlaneI < World->PlaneCount; PlaneI++, Plane++)
+        {
+            f32 Denom = VecDot(Plane->N, RayDirection);
+            if (Denom < -Tolerance || Denom > Tolerance)
+            {
+                f32 t = (-Plane->D - VecDot(Plane->N, RayOrigin)) / Denom;
+                if (t > MinHitDistance && t < HitDistance)
+                {
+                    HitDistance = t;
+                    HitMaterial = Plane->MatIndex;
+                    HitSomething = true;
+
+                    NextOrigin = RayOrigin + t*RayDirection;
+                    NextNormal = Plane->N;
+                }
+            }
+        }
+
+        sphere *Sphere = World->Spheres;
+        for (int SphereI = 0; SphereI < World->SphereCount; SphereI++, Sphere++)
+        {
+            vec3 SphereRelativeRayOrigin = RayOrigin - Sphere->P;
+            f32 a = VecDot(RayDirection, RayDirection);
+            f32 b = 2.0f*VecDot(RayDirection, SphereRelativeRayOrigin);
+            f32 c = VecDot(SphereRelativeRayOrigin, SphereRelativeRayOrigin) - Sphere->R * Sphere->R;
+
+            f32 Denom = 2.0f*a; // NOTE: Cannot be 0
+            f32 RootTerm = SqrtF(b*b - 4.0f*a*c);
+            if (RootTerm > Tolerance)
+            {
+                f32 tp = (-b + RootTerm) / Denom;
+                f32 tn = (-b - RootTerm) / Denom;
+
+                f32 t = tp;
+                if (tn > MinHitDistance && tn < tp)
+                {
+                    t = tn;
+                }
+
+                if (t > MinHitDistance && t < HitDistance)
+                {
+                    HitDistance = t;
+                    HitMaterial = Sphere->MatIndex;
+                    HitSomething = true;
+
+                    NextOrigin = RayOrigin + t*RayDirection;
+                    NextNormal = VecNormalize(NextOrigin - Sphere->P);
+                }
+            }
+        }
+
+        if (HitSomething)
+        {
+            material Mat = World->Materials[HitMaterial];
+
+            FinalColor += Attenuation * Mat.EmitColor;
+            Attenuation = Attenuation * Mat.ReflectColor;
+
+            RayOrigin = NextOrigin;
+            RayDirection = NextNormal;
+        }
+        else
+        {
+            // NOTE: Didn't hit anything, emit color of null material, and break out of the bounce loop
+            material Mat = World->Materials[HitMaterial];
+            FinalColor += Attenuation * Mat.EmitColor;
+            break;
+        }
+    }
+    
     return FinalColor;
 }
 
 int main(int argc, char **argv)
 {
+    printf("Raycasting... \n");
+    
     world World = {};
 
     material Materials[] = {
-        Vec3(1.0f, 1.0f, 1.0f),
-        Vec3(0.5f, 0.5f, 0.5f),
-        Vec3(1.0f, 0.0f, 0.0f),
+        {Vec3(0.3f, 0.4f, 0.5f), Vec3()},
+        {Vec3(), Vec3(0.5f, 0.5f, 0.5f)},
+        {Vec3(), Vec3(0.7f, 0.5f, 0.3f)},
     };
 
     plane Planes[] = {
@@ -88,7 +174,7 @@ int main(int argc, char **argv)
     };
 
     sphere Spheres[] = {
-        {Vec3(0.0f, 10.0f, 0.0f), 2.0f, 2},
+        {Vec3(0.0f, 0.0f, 0.0f), 1.0f, 2},
     };
 
     World.MaterialCount = ArrayCount(Materials);
@@ -103,16 +189,24 @@ int main(int argc, char **argv)
     vec3 CameraX = VecNormalize(VecCross(Vec3(0, 1, 0), CameraZ)); // World Up X Camera Z
     vec3 CameraY = VecNormalize(VecCross(CameraZ, CameraX));
 
+    image_u32 Image = AllocateImage(1280, 720);
+
     f32 FilmDist = 1.0f;
     f32 FilmW = 1.0f;
     f32 FilmH = 1.0f;
+    if (Image.Width > Image.Height)
+    {
+        FilmH = FilmW * ((f32)Image.Height / (f32)Image.Width);
+    }
+    else
+    {
+        FilmW = FilmH * ((f32)Image.Width / (f32)Image.Height);
+    }
     f32 HalfFilmW = 0.5f*FilmW;
     f32 HalfFilmH = 0.5f*FilmH;
     
     vec3 FilmCenter = CameraP - FilmDist*CameraZ;
     
-    image_u32 Image = AllocateImage(1280, 720);
-
     u32 *Pixel = Image.Pixels;
     for (int Y = 0; Y < Image.Height; Y++)
     {
@@ -132,9 +226,17 @@ int main(int argc, char **argv)
             
             *Pixel++ = ColorBGRA;
         }
+
+        if (Y % 64 == 0)
+        {
+            printf("\rRaycasting %d%%...        ", 100*Y / Image.Height);
+            fflush(stdout);
+        }
     }
 
     SaveBMP(&Image, "temp/raytest.bmp");
+
+    printf("\nDone.\n");
     
     return 0;
 }

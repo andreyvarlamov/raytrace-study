@@ -101,6 +101,12 @@ inline f32 RoundF(f32 Value)
     return Result;
 }
 
+inline u32 RoundF32ToU32(f32 F)
+{
+    u32 Result = (u32)(F + 0.5f);
+    return Result;
+}
+
 inline b32
 SolveQuadraticEquation(f32 A, f32 B, f32 C, f32 *Out_Root1, f32 *Out_Root2)
 {

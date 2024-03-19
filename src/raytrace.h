@@ -49,7 +49,8 @@ struct sphere
 
 struct material
 {
-    vec3 Color;
+    vec3 EmitColor;
+    vec3 ReflectColor;
 };
 
 struct world
